@@ -27,11 +27,18 @@ Prioritetsskala: `P0` (kritisk), `P1` (hog), `P2` (medel), `P3` (lag)
 - [x] **P2 - Resurshantering och robusthet**
   - Crypto-objekt hanteras i `try/finally`
 
-- [ ] **P2 - Typvalidering av importerad store-struktur**
-  - Verifiera att `items` ar dictionary/hashtable (inte bara att nyckeln finns)
-  - Ge tydligt fel redan i `Import-JsonCryptStore` vid fel typ
+- [x] **P2 - Typvalidering av importerad store-struktur**
+  - `Import-JsonCryptStore` validerar att `items` ar hashtable (string/array/number/null/boolean nekas)
+  - `ConvertTo-Hashtable` hanterar null-properties utan Mandatory-bindningsfel
+  - Tydligt felmeddelande: `"items" must be an object`
+  - Regressionstest i `tests/edge-cases.tests.ps1` och `tests/security.tests.ps1`
+
+- [x] **P2 - Strikt version-typkontroll i envelope**
+  - `Invoke-Decrypt` kraver att `version` ar integer (`[int]`/`[long]`), inte string/float/bool/array
+  - Forhindrar typforvirring via PowerShells losa jamforelse
+  - Regressionstest i `tests/security.tests.ps1` (type confusion-sektionen)
 
 - [ ] **P3 - Kvalitet och CI**
-  - Koppla `tests/robustness.tests.ps1` till CI
+  - Koppla testsviter (`robustness`, `edge-cases`, `security`) till CI
   - Lagg till ScriptAnalyzer i CI
   - Testmatrix: PS 5.1 + PS 7 (Windows/Linux)
