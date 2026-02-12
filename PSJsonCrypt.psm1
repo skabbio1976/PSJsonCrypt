@@ -130,9 +130,11 @@ function Invoke-Decrypt {
         throw 'Invalid encrypted data: not valid JSON.'
     }
 
-    # 2. Validate version
+    # 2. Validate version (strict: must be integer 1, not "1", 1.0, true, etc.)
     $versionProp = $envelope.PSObject.Properties['version']
-    if ($null -eq $versionProp -or $versionProp.Value -ne 1) {
+    if ($null -eq $versionProp -or
+        ($versionProp.Value -isnot [int] -and $versionProp.Value -isnot [long]) -or
+        $versionProp.Value -ne 1) {
         throw "Unsupported or missing envelope version."
     }
 
@@ -238,7 +240,12 @@ function ConvertTo-Hashtable {
     if ($InputObject -is [PSCustomObject]) {
         $ht = @{}
         foreach ($prop in $InputObject.PSObject.Properties) {
-            $ht[$prop.Name] = ConvertTo-Hashtable -InputObject $prop.Value
+            if ($null -eq $prop.Value) {
+                $ht[$prop.Name] = $null
+            }
+            else {
+                $ht[$prop.Name] = ConvertTo-Hashtable -InputObject $prop.Value
+            }
         }
         return $ht
     }
@@ -468,6 +475,9 @@ function Import-JsonCryptStore {
     # Ensure expected structure
     if (-not $store.ContainsKey('items')) {
         throw 'Invalid store format: missing "items" key.'
+    }
+    if ($null -eq $store.items -or $store.items -isnot [hashtable]) {
+        throw 'Invalid store format: "items" must be an object.'
     }
 
     return $store

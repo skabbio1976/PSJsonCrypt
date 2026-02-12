@@ -186,30 +186,25 @@ Write-Host ""
 # ────────────────────────────────────────────────────────────────
 Write-Host "--- Type Confusion ---" -ForegroundColor Yellow
 
-# 9) Version as string "1" -- NOTE: This currently PASSES due to PowerShell coercion (Finding 1)
+# 9) Version as string "1" -- FIXED: now rejected by strict integer type check
 $env9 = Get-ValidEnvelope
 $jsonStr = '{"version":"1","salt":"' + $env9.salt + '","iv":"' + $env9.iv + '","ciphertext":"' + $env9.ciphertext + '","mac":"' + $env9.mac + '"}'
-# This test documents that string version "1" is accepted (loose comparison)
-$dec9 = Unprotect-JsonCryptString -EncryptedString $jsonStr -Password "test-password"
-Assert-True ($dec9 -eq "test-plaintext") "Version as string '1' is accepted (loose comparison - Finding 1)"
+Assert-Throws { Unprotect-JsonCryptString -EncryptedString $jsonStr -Password "test-password" } "Version as string '1' is rejected (strict type check)" "Unsupported or missing envelope version"
 
-# 10) Version as float 1.0
+# 10) Version as float 1.0 -- FIXED: now rejected
 $env10 = Get-ValidEnvelope
 $jsonFloat = '{"version":1.0,"salt":"' + $env10.salt + '","iv":"' + $env10.iv + '","ciphertext":"' + $env10.ciphertext + '","mac":"' + $env10.mac + '"}'
-$dec10 = Unprotect-JsonCryptString -EncryptedString $jsonFloat -Password "test-password"
-Assert-True ($dec10 -eq "test-plaintext") "Version as float 1.0 is accepted (loose comparison - Finding 1)"
+Assert-Throws { Unprotect-JsonCryptString -EncryptedString $jsonFloat -Password "test-password" } "Version as float 1.0 is rejected (strict type check)" "Unsupported or missing envelope version"
 
-# 11) Version as boolean true (equals 1 in PowerShell)
+# 11) Version as boolean true -- FIXED: now rejected
 $env11 = Get-ValidEnvelope
 $jsonBool = '{"version":true,"salt":"' + $env11.salt + '","iv":"' + $env11.iv + '","ciphertext":"' + $env11.ciphertext + '","mac":"' + $env11.mac + '"}'
-$dec11 = Unprotect-JsonCryptString -EncryptedString $jsonBool -Password "test-password"
-Assert-True ($dec11 -eq "test-plaintext") "Version as boolean true is accepted (loose comparison - Finding 1)"
+Assert-Throws { Unprotect-JsonCryptString -EncryptedString $jsonBool -Password "test-password" } "Version as boolean true is rejected (strict type check)" "Unsupported or missing envelope version"
 
-# 12) Version as array [1] (PowerShell array containment check)
+# 12) Version as array [1] -- FIXED: now rejected
 $env12 = Get-ValidEnvelope
 $jsonArr = '{"version":[1],"salt":"' + $env12.salt + '","iv":"' + $env12.iv + '","ciphertext":"' + $env12.ciphertext + '","mac":"' + $env12.mac + '"}'
-$dec12 = Unprotect-JsonCryptString -EncryptedString $jsonArr -Password "test-password"
-Assert-True ($dec12 -eq "test-plaintext") "Version as array [1] is accepted (loose comparison - Finding 1)"
+Assert-Throws { Unprotect-JsonCryptString -EncryptedString $jsonArr -Password "test-password" } "Version as array [1] is rejected (strict type check)" "Unsupported or missing envelope version"
 
 # 13) Version as 2 should be rejected
 $env13 = Get-ValidEnvelope
@@ -324,85 +319,34 @@ Write-Host ""
 # ────────────────────────────────────────────────────────────────
 Write-Host "--- Store Items Type Validation (Finding 2) ---" -ForegroundColor Yellow
 
-# 28) items as string -- import succeeds but should ideally reject (BUG: Finding 2)
+# 28) items as string -- FIXED: now rejected with clear error
 $tmpStr = New-TempPath '.json'
 Set-Content -LiteralPath $tmpStr -Value '{"items":"not-a-dict"}' -NoNewline
-$importedStr = $null
-$importStrSucceeded = $false
-try {
-    $importedStr = Import-JsonCryptStore -Path $tmpStr -Plaintext
-    $importStrSucceeded = $true
-} catch {
-    $importStrSucceeded = $false
-}
-# Document the bug: import should reject non-dict items but currently accepts them
-Assert-True $importStrSucceeded "BUG-Finding2: Import accepts items as string (should reject)"
-if ($importStrSucceeded) {
-    # Verify that subsequent operations fail with confusing errors
-    $gotConfusingError = $false
-    try {
-        Get-JsonCryptItem -Store $importedStr -Name "test"
-    } catch {
-        $gotConfusingError = $_.Exception.Message -like "*does not contain a method*"
-    }
-    Assert-True $gotConfusingError "BUG-Finding2: String items causes confusing method error on Get"
-}
+Assert-Throws { Import-JsonCryptStore -Path $tmpStr -Plaintext } "Import rejects items as string" '"items" must be an object'
 Remove-Item -LiteralPath $tmpStr -Force
 
-# 29) items as array
+# 29) items as array -- FIXED: now rejected
 $tmpArr = New-TempPath '.json'
 Set-Content -LiteralPath $tmpArr -Value '{"items":[1,2,3]}' -NoNewline
-$importArrSucceeded = $false
-try {
-    Import-JsonCryptStore -Path $tmpArr -Plaintext | Out-Null
-    $importArrSucceeded = $true
-} catch {
-    $importArrSucceeded = $false
-}
-Assert-True $importArrSucceeded "BUG-Finding2: Import accepts items as array (should reject)"
+Assert-Throws { Import-JsonCryptStore -Path $tmpArr -Plaintext } "Import rejects items as array" '"items" must be an object'
 Remove-Item -LiteralPath $tmpArr -Force
 
-# 30) items as number
+# 30) items as number -- FIXED: now rejected
 $tmpNum = New-TempPath '.json'
 Set-Content -LiteralPath $tmpNum -Value '{"items":42}' -NoNewline
-$importNumSucceeded = $false
-try {
-    Import-JsonCryptStore -Path $tmpNum -Plaintext | Out-Null
-    $importNumSucceeded = $true
-} catch {
-    $importNumSucceeded = $false
-}
-Assert-True $importNumSucceeded "BUG-Finding2: Import accepts items as number (should reject)"
+Assert-Throws { Import-JsonCryptStore -Path $tmpNum -Plaintext } "Import rejects items as number" '"items" must be an object'
 Remove-Item -LiteralPath $tmpNum -Force
 
-# 31) items as null -- ConvertTo-Hashtable's Mandatory parameter rejects null before
-#     the null-check guard (line 228) can execute. The import fails, but with a confusing
-#     .NET binding error instead of a clear "items must be a hashtable" message.
+# 31) items as null -- now rejected with clear error
 $tmpNull = New-TempPath '.json'
 Set-Content -LiteralPath $tmpNull -Value '{"items":null}' -NoNewline
-$importNullFailed = $false
-$importNullMsg = ""
-try {
-    Import-JsonCryptStore -Path $tmpNull -Plaintext | Out-Null
-} catch {
-    $importNullFailed = $true
-    $importNullMsg = $_.Exception.Message
-}
-Assert-True $importNullFailed "Items as null causes import to fail (albeit with confusing error)"
-Assert-True ($importNullMsg -notlike '*missing "items" key*') "BUG-Finding2: Null items error is confusing, not the clear 'items' validation message"
+Assert-Throws { Import-JsonCryptStore -Path $tmpNull -Plaintext } "Import rejects items as null" '"items" must be an object'
 Remove-Item -LiteralPath $tmpNull -Force
 
-# 32) items as boolean
+# 32) items as boolean -- FIXED: now rejected
 $tmpBool = New-TempPath '.json'
 Set-Content -LiteralPath $tmpBool -Value '{"items":true}' -NoNewline
-$importBoolSucceeded = $false
-try {
-    Import-JsonCryptStore -Path $tmpBool -Plaintext | Out-Null
-    $importBoolSucceeded = $true
-} catch {
-    $importBoolSucceeded = $false
-}
-Assert-True $importBoolSucceeded "BUG-Finding2: Import accepts items as boolean (should reject)"
+Assert-Throws { Import-JsonCryptStore -Path $tmpBool -Plaintext } "Import rejects items as boolean" '"items" must be an object'
 Remove-Item -LiteralPath $tmpBool -Force
 
 Write-Host ""

@@ -316,58 +316,22 @@ Remove-Item -LiteralPath $tmpPlain -Force
 # 21) Items type validation: import store where items is a string
 # BUG NOTE: The module validates that 'items' key exists, but does not validate
 # that its type is a hashtable. If 'items' is a string, array, or number, import
-# succeeds but downstream operations (Add-JsonCryptItem, Get-JsonCryptItem, etc.)
-# will fail in confusing ways. This is a known gap in validation.
+# FIXED: items type is now validated on import
 $tmpBadItems1 = New-TempPath '.json'
 Set-Content -LiteralPath $tmpBadItems1 -Value '{"items":"not-a-hashtable"}' -NoNewline
-$badStore1 = $null
-$importedOk = $false
-try {
-    $badStore1 = Import-JsonCryptStore -Path $tmpBadItems1 -Plaintext
-    $importedOk = $true
-} catch {}
-# If import succeeds without validation, that is the bug: document it
-if ($importedOk) {
-    # The import succeeded even though items is a string - this is a bug
-    Assert-True $true "BUG-DOCUMENTED: Import accepts items as string (should reject non-hashtable)"
-    Write-Host "  NOTE: items type is [$($badStore1.items.GetType().Name)] instead of hashtable" -ForegroundColor Magenta
-} else {
-    Assert-True $true "Items type validation: import rejects items as string"
-}
+Assert-Throws { Import-JsonCryptStore -Path $tmpBadItems1 -Plaintext } "Items type validation: import rejects items as string" '"items" must be an object'
 Remove-Item -LiteralPath $tmpBadItems1 -Force
 
 # 22) Items type validation: import store where items is an array
 $tmpBadItems2 = New-TempPath '.json'
 Set-Content -LiteralPath $tmpBadItems2 -Value '{"items":[1,2,3]}' -NoNewline
-$badStore2 = $null
-$importedOk2 = $false
-try {
-    $badStore2 = Import-JsonCryptStore -Path $tmpBadItems2 -Plaintext
-    $importedOk2 = $true
-} catch {}
-if ($importedOk2) {
-    Assert-True $true "BUG-DOCUMENTED: Import accepts items as array (should reject non-hashtable)"
-    Write-Host "  NOTE: items type is [$($badStore2.items.GetType().Name)] instead of hashtable" -ForegroundColor Magenta
-} else {
-    Assert-True $true "Items type validation: import rejects items as array"
-}
+Assert-Throws { Import-JsonCryptStore -Path $tmpBadItems2 -Plaintext } "Items type validation: import rejects items as array" '"items" must be an object'
 Remove-Item -LiteralPath $tmpBadItems2 -Force
 
 # 23) Items type validation: import store where items is a number
 $tmpBadItems3 = New-TempPath '.json'
 Set-Content -LiteralPath $tmpBadItems3 -Value '{"items":42}' -NoNewline
-$badStore3 = $null
-$importedOk3 = $false
-try {
-    $badStore3 = Import-JsonCryptStore -Path $tmpBadItems3 -Plaintext
-    $importedOk3 = $true
-} catch {}
-if ($importedOk3) {
-    Assert-True $true "BUG-DOCUMENTED: Import accepts items as number (should reject non-hashtable)"
-    Write-Host "  NOTE: items type is [$($badStore3.items.GetType().Name)] instead of hashtable" -ForegroundColor Magenta
-} else {
-    Assert-True $true "Items type validation: import rejects items as number"
-}
+Assert-Throws { Import-JsonCryptStore -Path $tmpBadItems3 -Plaintext } "Items type validation: import rejects items as number" '"items" must be an object'
 Remove-Item -LiteralPath $tmpBadItems3 -Force
 
 # 24) Plaintext save then encrypted re-save (switch modes)
