@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-Import-Module (Join-Path $PSScriptRoot '..' 'PSJsonCrypt.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..' 'PSJsonCrypt.psd1') -Force
 
 $passed = 0
 $failed = 0

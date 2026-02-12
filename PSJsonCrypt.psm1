@@ -495,19 +495,3 @@ function New-JsonCryptKey {
     return ([System.BitConverter]::ToString($bytes) -replace '-','').ToLower()
 }
 
-# ────────────────────────────────────────────────────────────────
-# [3] Export-ModuleMember
-# ────────────────────────────────────────────────────────────────
-
-Export-ModuleMember -Function @(
-    'New-JsonCryptStore'
-    'Add-JsonCryptItem'
-    'Get-JsonCryptItem'
-    'Remove-JsonCryptItem'
-    'Get-JsonCryptItemNames'
-    'Protect-JsonCryptString'
-    'Unprotect-JsonCryptString'
-    'Save-JsonCryptStore'
-    'Import-JsonCryptStore'
-    'New-JsonCryptKey'
-)
