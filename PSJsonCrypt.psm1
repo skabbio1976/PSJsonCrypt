@@ -6,6 +6,8 @@ Set-StrictMode -Version Latest
 # ────────────────────────────────────────────────────────────────
 
 function Resolve-KeySource {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password',
+        Justification = 'Password is derived into key material via PBKDF2; SecureString offers no in-memory protection on .NET Core/Linux/macOS and would still be marshalled to plaintext bytes here.')]
     [CmdletBinding()]
     param(
         [string]$Password,
@@ -689,6 +691,8 @@ function Get-JsonCryptItemNames {
 }
 
 function Protect-JsonCryptString {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password',
+        Justification = 'Password is derived into key material via PBKDF2; SecureString offers no in-memory protection on .NET Core/Linux/macOS and would still be marshalled to plaintext bytes here.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -705,6 +709,8 @@ function Protect-JsonCryptString {
 }
 
 function Unprotect-JsonCryptString {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password',
+        Justification = 'Password is derived into key material via PBKDF2; SecureString offers no in-memory protection on .NET Core/Linux/macOS and would still be marshalled to plaintext bytes here.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -721,6 +727,8 @@ function Unprotect-JsonCryptString {
 }
 
 function Save-JsonCryptStore {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password',
+        Justification = 'Password is derived into key material via PBKDF2; SecureString offers no in-memory protection on .NET Core/Linux/macOS and would still be marshalled to plaintext bytes here.')]
     [CmdletBinding(DefaultParameterSetName = 'None')]
     param(
         [Parameter(Mandatory)]
@@ -772,6 +780,8 @@ function Save-JsonCryptStore {
 }
 
 function Import-JsonCryptStore {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password',
+        Justification = 'Password is derived into key material via PBKDF2; SecureString offers no in-memory protection on .NET Core/Linux/macOS and would still be marshalled to plaintext bytes here.')]
     [CmdletBinding(DefaultParameterSetName = 'None')]
     param(
         [Parameter(Mandatory)]
