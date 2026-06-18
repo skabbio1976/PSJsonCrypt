@@ -284,6 +284,340 @@ function Set-SecureFilePermission {
 }
 
 # ────────────────────────────────────────────────────────────────
+# [1b] Format serialization (JSON / INI / TOML)
+# ────────────────────────────────────────────────────────────────
+
+function Resolve-StoreFormat {
+    [CmdletBinding()]
+    param(
+        [string]$Format,
+        [string]$Path
+    )
+
+    if ($Format) { return $Format }
+
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if ($ext) { $ext = $ext.ToLowerInvariant() }
+    switch ($ext) {
+        '.ini'  { return 'Ini' }
+        '.toml' { return 'Toml' }
+        default { return 'Json' }
+    }
+}
+
+function Test-IsTableValue {
+    param($Value)
+    return ($Value -is [System.Collections.IDictionary]) -or ($Value -is [PSCustomObject])
+}
+
+function Get-TableEntry {
+    # Normalizes IDictionary / PSCustomObject into an ordered list of @{ Key; Value }
+    param($Table)
+
+    $entries = @()
+    if ($Table -is [System.Collections.IDictionary]) {
+        foreach ($k in $Table.Keys) {
+            $entries += [pscustomobject]@{ Key = [string]$k; Value = $Table[$k] }
+        }
+    }
+    elseif ($Table -is [PSCustomObject]) {
+        foreach ($p in $Table.PSObject.Properties) {
+            $entries += [pscustomobject]@{ Key = $p.Name; Value = $p.Value }
+        }
+    }
+    return ,$entries
+}
+
+# ---- TOML ----------------------------------------------------------
+
+function Format-TomlString {
+    param([string]$Value)
+    $s = $Value.Replace('\', '\\').Replace('"', '\"').
+        Replace("`b", '\b').Replace("`t", '\t').Replace("`n", '\n').
+        Replace("`f", '\f').Replace("`r", '\r')
+    return '"' + $s + '"'
+}
+
+function Format-TomlKey {
+    param([string]$Key)
+    if ($Key -match '^[A-Za-z0-9_-]+$' -and $Key.Length -gt 0) { return $Key }
+    return (Format-TomlString -Value $Key)
+}
+
+function Format-TomlValue {
+    param($Value)
+
+    if ($null -eq $Value) { return '""' }
+    if ($Value -is [bool]) { if ($Value) { return 'true' } else { return 'false' } }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [int16] -or
+        $Value -is [byte] -or $Value -is [sbyte] -or $Value -is [uint16] -or
+        $Value -is [uint32]) {
+        return [string]([long]$Value)
+    }
+    if ($Value -is [double] -or $Value -is [single] -or $Value -is [decimal]) {
+        return ([double]$Value).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $parts = @()
+        foreach ($v in $Value) { $parts += (Format-TomlValue -Value $v) }
+        return '[' + ($parts -join ', ') + ']'
+    }
+    return (Format-TomlString -Value ([string]$Value))
+}
+
+function Write-TomlTable {
+    param(
+        [System.Text.StringBuilder]$Sb,
+        $Table,
+        [string[]]$Path
+    )
+
+    $entries    = Get-TableEntry -Table $Table
+    $scalars    = @($entries | Where-Object { -not (Test-IsTableValue -Value $_.Value) })
+    $subtables  = @($entries | Where-Object {      (Test-IsTableValue -Value $_.Value) })
+    $isEmpty    = ($entries.Count -eq 0)
+
+    if ($Path.Count -gt 0 -and ($scalars.Count -gt 0 -or $isEmpty)) {
+        $header = ($Path | ForEach-Object { Format-TomlKey -Key $_ }) -join '.'
+        [void]$Sb.AppendLine('[' + $header + ']')
+    }
+    foreach ($e in $scalars) {
+        [void]$Sb.AppendLine((Format-TomlKey -Key $e.Key) + ' = ' + (Format-TomlValue -Value $e.Value))
+    }
+    if ($scalars.Count -gt 0) { [void]$Sb.AppendLine('') }
+    foreach ($e in $subtables) {
+        Write-TomlTable -Sb $Sb -Table $e.Value -Path ($Path + $e.Key)
+    }
+}
+
+function ConvertTo-TomlString {
+    param($InputObject)
+    $sb = New-Object System.Text.StringBuilder
+    Write-TomlTable -Sb $sb -Table $InputObject -Path @()
+    return $sb.ToString().TrimEnd("`r", "`n")
+}
+
+function ConvertFrom-TomlBasicString {
+    # $Token must start with a double-quote; reads up to the closing quote.
+    param([string]$Token)
+    $sb = New-Object System.Text.StringBuilder
+    $i = 1
+    while ($i -lt $Token.Length) {
+        $c = $Token[$i]
+        if ($c -eq '\' -and ($i + 1) -lt $Token.Length) {
+            $n = $Token[$i + 1]
+            switch ($n) {
+                '"'     { [void]$sb.Append('"') }
+                '\'     { [void]$sb.Append('\') }
+                'n'     { [void]$sb.Append("`n") }
+                't'     { [void]$sb.Append("`t") }
+                'r'     { [void]$sb.Append("`r") }
+                'b'     { [void]$sb.Append([char]8) }
+                'f'     { [void]$sb.Append([char]12) }
+                default { [void]$sb.Append($n) }
+            }
+            $i += 2
+            continue
+        }
+        if ($c -eq '"') { break }
+        [void]$sb.Append($c)
+        $i++
+    }
+    return $sb.ToString()
+}
+
+function Split-TomlList {
+    # Splits on top-level commas, respecting quotes and nested brackets.
+    param([string]$Inner)
+    $parts = @()
+    $depth = 0
+    $inStr = $false
+    $cur = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $Inner.Length; $i++) {
+        $c = $Inner[$i]
+        if ($inStr) {
+            [void]$cur.Append($c)
+            if ($c -eq '\' -and ($i + 1) -lt $Inner.Length) { [void]$cur.Append($Inner[$i + 1]); $i++; continue }
+            if ($c -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($c -eq '"') { $inStr = $true; [void]$cur.Append($c); continue }
+        if ($c -eq '[') { $depth++; [void]$cur.Append($c); continue }
+        if ($c -eq ']') { $depth--; [void]$cur.Append($c); continue }
+        if ($c -eq ',' -and $depth -eq 0) { $parts += $cur.ToString(); $cur = New-Object System.Text.StringBuilder; continue }
+        [void]$cur.Append($c)
+    }
+    if ($cur.ToString().Trim().Length -gt 0) { $parts += $cur.ToString() }
+    return ,$parts
+}
+
+function ConvertFrom-TomlValue {
+    param([string]$Token)
+
+    $t = $Token.Trim()
+    if ($t.Length -eq 0) { return '' }
+
+    if ($t.StartsWith('"')) { return (ConvertFrom-TomlBasicString -Token $t) }
+
+    if ($t.StartsWith('[')) {
+        $rb = $t.LastIndexOf(']')
+        if ($rb -lt 1) { return @() }
+        $inner = $t.Substring(1, $rb - 1)
+        $arr = @()
+        foreach ($elem in (Split-TomlList -Inner $inner)) {
+            $arr += (ConvertFrom-TomlValue -Token $elem)
+        }
+        return ,$arr
+    }
+
+    if ($t -eq 'true')  { return $true }
+    if ($t -eq 'false') { return $false }
+    if ($t -match '^[+-]?\d+$') { return [long]$t }
+    if ($t -match '^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$') {
+        return [double]::Parse($t, [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return $t.Trim('"')
+}
+
+function Split-TomlKeyPath {
+    # Splits a dotted key path on top-level dots, respecting quoted segments.
+    param([string]$Text)
+    $parts = @()
+    $inStr = $false
+    $cur = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $Text.Length; $i++) {
+        $c = $Text[$i]
+        if ($inStr) {
+            [void]$cur.Append($c)
+            if ($c -eq '\' -and ($i + 1) -lt $Text.Length) { [void]$cur.Append($Text[$i + 1]); $i++; continue }
+            if ($c -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($c -eq '"') { $inStr = $true; [void]$cur.Append($c); continue }
+        if ($c -eq '.') { $parts += $cur.ToString(); $cur = New-Object System.Text.StringBuilder; continue }
+        [void]$cur.Append($c)
+    }
+    $parts += $cur.ToString()
+
+    return ,@($parts | ForEach-Object {
+        $seg = $_.Trim()
+        if ($seg.StartsWith('"')) { ConvertFrom-TomlBasicString -Token $seg } else { $seg }
+    })
+}
+
+function ConvertFrom-TomlString {
+    param([string]$Text)
+
+    $root = @{}
+    $current = $root
+    foreach ($rawLine in ($Text -split "`r?`n")) {
+        $line = $rawLine.Trim()
+        if ($line.Length -eq 0) { continue }
+        if ($line.StartsWith('#')) { continue }
+
+        if ($line.StartsWith('[')) {
+            $end = $line.IndexOf(']')
+            if ($end -lt 0) { continue }
+            $inner = $line.Substring(1, $end - 1).Trim()
+            $segments = Split-TomlKeyPath -Text $inner
+            $node = $root
+            foreach ($seg in $segments) {
+                if (-not $node.ContainsKey($seg) -or $node[$seg] -isnot [hashtable]) { $node[$seg] = @{} }
+                $node = $node[$seg]
+            }
+            $current = $node
+            continue
+        }
+
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 0) { continue }
+        $keyToken = $line.Substring(0, $eq).Trim()
+        $valToken = $line.Substring($eq + 1).Trim()
+        if ($keyToken.StartsWith('"')) { $key = ConvertFrom-TomlBasicString -Token $keyToken } else { $key = $keyToken }
+        $current[$key] = ConvertFrom-TomlValue -Token $valToken
+    }
+    return $root
+}
+
+# ---- INI -----------------------------------------------------------
+
+function Format-IniValue {
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [bool]) { if ($Value) { return 'true' } else { return 'false' } }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $parts = @()
+        foreach ($v in $Value) { $parts += [string]$v }
+        return ($parts -join ', ')
+    }
+    return [string]$Value
+}
+
+function Write-IniTable {
+    param(
+        [System.Text.StringBuilder]$Sb,
+        $Table,
+        [string[]]$Path
+    )
+
+    $entries   = Get-TableEntry -Table $Table
+    $scalars   = @($entries | Where-Object { -not (Test-IsTableValue -Value $_.Value) })
+    $subtables = @($entries | Where-Object {      (Test-IsTableValue -Value $_.Value) })
+    $isEmpty   = ($entries.Count -eq 0)
+
+    if ($Path.Count -gt 0 -and ($scalars.Count -gt 0 -or $isEmpty)) {
+        [void]$Sb.AppendLine('[' + ($Path -join '.') + ']')
+    }
+    foreach ($e in $scalars) {
+        [void]$Sb.AppendLine($e.Key + ' = ' + (Format-IniValue -Value $e.Value))
+    }
+    if ($scalars.Count -gt 0) { [void]$Sb.AppendLine('') }
+    foreach ($e in $subtables) {
+        Write-IniTable -Sb $Sb -Table $e.Value -Path ($Path + $e.Key)
+    }
+}
+
+function ConvertTo-IniString {
+    param($InputObject)
+    $sb = New-Object System.Text.StringBuilder
+    Write-IniTable -Sb $sb -Table $InputObject -Path @()
+    return $sb.ToString().TrimEnd("`r", "`n")
+}
+
+function ConvertFrom-IniString {
+    param([string]$Text)
+
+    $root = @{}
+    $current = $root
+    foreach ($rawLine in ($Text -split "`r?`n")) {
+        $line = $rawLine.Trim()
+        if ($line.Length -eq 0) { continue }
+        if ($line.StartsWith(';') -or $line.StartsWith('#')) { continue }
+
+        if ($line.StartsWith('[')) {
+            $end = $line.IndexOf(']')
+            if ($end -lt 0) { continue }
+            $inner = $line.Substring(1, $end - 1).Trim()
+            $node = $root
+            foreach ($seg in ($inner -split '\.')) {
+                $seg = $seg.Trim()
+                if (-not $node.ContainsKey($seg) -or $node[$seg] -isnot [hashtable]) { $node[$seg] = @{} }
+                $node = $node[$seg]
+            }
+            $current = $node
+            continue
+        }
+
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 0) { continue }
+        $key = $line.Substring(0, $eq).Trim()
+        $val = $line.Substring($eq + 1).Trim()
+        $current[$key] = $val
+    }
+    return $root
+}
+
+# ────────────────────────────────────────────────────────────────
 # [2] Exported functions
 # ────────────────────────────────────────────────────────────────
 
@@ -408,21 +742,29 @@ function Save-JsonCryptStore {
         [string]$KeyFile,
 
         [Parameter(Mandatory, ParameterSetName = 'EnvironmentVariable')]
-        [string]$EnvironmentVariable
+        [string]$EnvironmentVariable,
+
+        [ValidateSet('Json', 'Ini', 'Toml')]
+        [string]$Format
     )
 
     if ($PSCmdlet.ParameterSetName -eq 'None') {
         throw 'Specify -Plaintext for unencrypted storage, or provide a key source (-Password, -Key, -KeyFile, -EnvironmentVariable).'
     }
 
-    $json = $Store | ConvertTo-Json -Depth 20 -Compress
+    $resolvedFormat = Resolve-StoreFormat -Format $Format -Path $Path
+    switch ($resolvedFormat) {
+        'Ini'   { $serialized = ConvertTo-IniString  -InputObject $Store }
+        'Toml'  { $serialized = ConvertTo-TomlString -InputObject $Store }
+        default { $serialized = $Store | ConvertTo-Json -Depth 20 -Compress }
+    }
 
     if ($PSCmdlet.ParameterSetName -eq 'Plaintext') {
-        $json | Set-Content -LiteralPath $Path -Encoding UTF8 -NoNewline
+        $serialized | Set-Content -LiteralPath $Path -Encoding UTF8 -NoNewline
     }
     else {
         $secretBytes = Resolve-KeySource -Password $Password -Key $Key -KeyFile $KeyFile -EnvironmentVariable $EnvironmentVariable
-        $encrypted = Invoke-Encrypt -SecretBytes $secretBytes -Plaintext $json
+        $encrypted = Invoke-Encrypt -SecretBytes $secretBytes -Plaintext $serialized
         $encrypted | Set-Content -LiteralPath $Path -Encoding UTF8 -NoNewline
     }
 
@@ -448,7 +790,10 @@ function Import-JsonCryptStore {
         [string]$KeyFile,
 
         [Parameter(Mandatory, ParameterSetName = 'EnvironmentVariable')]
-        [string]$EnvironmentVariable
+        [string]$EnvironmentVariable,
+
+        [ValidateSet('Json', 'Ini', 'Toml')]
+        [string]$Format
     )
 
     if ($PSCmdlet.ParameterSetName -eq 'None') {
@@ -462,15 +807,19 @@ function Import-JsonCryptStore {
     $raw = Get-Content -LiteralPath $Path -Raw
 
     if ($PSCmdlet.ParameterSetName -eq 'Plaintext') {
-        $json = $raw
+        $text = $raw
     }
     else {
         $secretBytes = Resolve-KeySource -Password $Password -Key $Key -KeyFile $KeyFile -EnvironmentVariable $EnvironmentVariable
-        $json = Invoke-Decrypt -SecretBytes $secretBytes -EncryptedString $raw
+        $text = Invoke-Decrypt -SecretBytes $secretBytes -EncryptedString $raw
     }
 
-    $parsed = $json | ConvertFrom-Json
-    $store  = ConvertTo-Hashtable -InputObject $parsed
+    $resolvedFormat = Resolve-StoreFormat -Format $Format -Path $Path
+    switch ($resolvedFormat) {
+        'Ini'   { $store = ConvertFrom-IniString  -Text $text }
+        'Toml'  { $store = ConvertFrom-TomlString -Text $text }
+        default { $store = ConvertTo-Hashtable -InputObject ($text | ConvertFrom-Json) }
+    }
 
     # Ensure expected structure
     if (-not $store.ContainsKey('items')) {

@@ -13,6 +13,7 @@ Inspired by [jsoncrypt](https://github.com/skabbio1976/jsoncrypt) (Go), ported t
 - PBKDF2-SHA256 key derivation (600,000 iterations)
 - Automatic restrictive file permissions on saved stores
 - Four key sources: password, key string, key file, environment variable
+- Three storage formats: JSON (default), INI, and TOML — auto-detected by file extension
 
 ## Requirements
 
@@ -100,6 +101,51 @@ $s = Import-JsonCryptStore -Path "./data.enc" -Password "pass"
 Save-JsonCryptStore   -Store $s -Path "./data.json" -Plaintext
 $s = Import-JsonCryptStore -Path "./data.json" -Plaintext
 ```
+
+### Storage formats (JSON / INI / TOML)
+
+Stores can be serialized as JSON (default), INI, or TOML. The format is detected
+automatically from the file extension (`.ini` → INI, `.toml` → TOML, anything else
+→ JSON), or set explicitly with `-Format`. Format selection is independent of
+encryption — any format can be saved encrypted or as `-Plaintext`.
+
+```powershell
+# Auto-detected from the extension
+Save-JsonCryptStore   -Store $s -Path "./secrets.toml" -Password "pass"
+$s = Import-JsonCryptStore -Path "./secrets.toml" -Password "pass"
+
+Save-JsonCryptStore   -Store $s -Path "./secrets.ini" -Plaintext
+$s = Import-JsonCryptStore -Path "./secrets.ini" -Plaintext
+
+# Force a format regardless of extension
+Save-JsonCryptStore   -Store $s -Path "./data.bin" -Password "pass" -Format Toml
+$s = Import-JsonCryptStore -Path "./data.bin" -Password "pass" -Format Toml
+```
+
+A store is written as nested tables/sections keyed by item name. For example, a
+store with an item `prod = @{ host = "db.example.com"; port = 5432 }` serializes to:
+
+```toml
+[items.prod]
+host = "db.example.com"
+port = 5432
+```
+
+```ini
+[items.prod]
+host = db.example.com
+port = 5432
+```
+
+**Format notes:**
+
+- **JSON** — full fidelity; the only format used for the encrypted envelope itself.
+- **TOML** — preserves strings, integers, floats, booleans, and arrays of scalars.
+  `null` is written as an empty string (TOML has no null).
+- **INI** — an untyped format: every value is read back as a string (e.g. `5432`
+  becomes `"5432"`, `true` becomes `"true"`). Arrays are joined with `, `. Use INI
+  only when string values are sufficient. Lines beginning with `;` or `#` are
+  treated as comments.
 
 ### Key generation
 
